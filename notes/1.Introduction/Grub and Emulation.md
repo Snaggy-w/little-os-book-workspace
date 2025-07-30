@@ -79,3 +79,77 @@ XMM06=0000000000000000 0000000000000000 XMM07=0000000000000000 0000000000000000
 ```
 
 >*Note:* All other commands and tool chains are the same as the book
+
+
+## Issue with larger kernel sizes (issue appeared in chapter 4)
+
+The linker includes by default the multiboot header, but it doesn't ensure that it appears at the top of the kernel executable. Grub looks for that header in the first 8 Kb of the file, if it doesn't find it, the boot will fail, so we must declare it manually at the start in the loader and linker as so:
+
+```
+ENTRY(loader)                /* the name of the entry label */  
+  
+SECTIONS {  
+   . = 0x00100000;          /* the code should be loaded at 1 MB */  
+  
+  
+   .multiboot :  
+   {  
+       *(.multiboot)  /* we updated the headers here */
+   }  
+   .text ALIGN (0x1000) :   /* align at 4 KB */  
+   {  
+       *(.text)             /* all text sections from all files */  
+   }  
+  
+   .rodata ALIGN (0x1000) : /* align at 4 KB */  
+   {  
+       *(.rodata*)          /* all read-only data sections from all files */  
+   }  
+  
+   .data ALIGN (0x1000) :   /* align at 4 KB */  
+   {  
+       *(.data)             /* all data sections from all files */  
+   }  
+  
+   .bss ALIGN (0x1000) :    /* align at 4 KB */  
+   {  
+       *(COMMON)            /* all COMMON sections from all files */  
+       *(.bss)              /* all bss sections from all files */  
+   }  
+}
+```
+
+```asm
+global loader                   ; the entry symbol for ELF  
+  
+   MAGIC_NUMBER equ 0x1BADB002     ; define the magic number constant  
+   FLAGS        equ 0x0            ; multiboot flags  
+   CHECKSUM     equ -MAGIC_NUMBER  ; calculate the checksum  
+                                   ; (magic number + checksum + flags should equal 0)  
+   KERNEL_STACK_SIZE equ 4096  
+  
+   section .multiboot  ; we added the multiboot section at the top
+   align 4  
+       dd MAGIC_NUMBER  
+       dd FLAGS  
+       dd CHECKSUM  
+   section .bss  
+   align 4  
+   kernel_stack:  
+       resb KERNEL_STACK_SIZE  
+   section .text:                  ; start of the text (code) section  
+   align 4                         ; the code must be 4 byte aligned  
+       dd MAGIC_NUMBER             ; write the magic number to the machine code,  
+       dd FLAGS                    ; the flags,  
+       dd CHECKSUM                 ; and the checksum  
+  
+       extern kmain                ; kmain defined in the C file  
+   loader:                         ; the loader label (defined as entry point in linker script)  
+       mov eax, 0xCAFEBABE         ; place the number 0xCAFEBABE in the register eax  
+       mov esp, kernel_stack + KERNEL_STACK_SIZE  
+       call kmain                  ; call kmain  
+   .loop:  
+       jmp .loop                   ; loop forever
+```
+
+The multiboot header uses a magic number to be identified, then tells grub some info using the flags we assigned.
